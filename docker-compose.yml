@@ -1,0 +1,145 @@
+networks:
+  micro-net:
+    driver: bridge
+volumes:
+  mysql-service-data:
+  api-gateway-data:
+  flights-service-data:
+  booking-service-data:
+  notification-service-data:
+services:
+  mysql-service:
+    image: mysql:latest
+    container_name: mysql-service
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: service_db
+      MYSQL_USER: service_user
+      MYSQL_PASSWORD: rootpassword
+    ports:
+      - "33060:3306"
+    networks:
+      - micro-net
+    volumes:
+      - mysql-service-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  api-gateway:
+    image: api-gateway:latest
+    container_name: api-gateway
+    build:
+      context: ./API-GATEWAY
+      dockerfile: Dockerfile
+    networks:
+      - micro-net
+    volumes:
+      - api-gateway-data:/var/lib/api-gateway-data
+    ports:
+      - "4000:4000"
+    labels:
+      kompose.service.type: LoadBalancer
+    environment:
+      PORT: 4000
+      SALT_ROUND: 5
+      ACCESS_JWT_EXPIRY: "1d" #expire JWT in 10 min
+      REFRESH_JWT_EXPIRY: "7d" #expire JWT in 10 min
+      ACCESS_TOKEN_PRIVATE_KEY: "abfdf"
+      REFRESH_TOKEN_PRIVATE_KEY: "abfdf"
+      FLIGHT_SERVICE_ADDRESS: http://flights-service:4001
+      BOOKING_SERVICE_ADDRESS: http://booking-service:4002
+      NOTIFICATION_SERVICE_ADDRESS: http://notification-service:4003
+      DB_HOST: mysql-service
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: rootpassword
+      DB_DATABASE: service_db
+    depends_on:
+      mysql-service:
+        condition: service_healthy
+
+  flights-service:
+    build:
+      context: ./flight-backend
+      dockerfile: Dockerfile
+    image: flights-service
+    networks:
+      - micro-net
+    volumes:
+      - flights-service-data:/var/lib/flights-service-data
+    ports:
+      - "4001:4001"
+    environment:
+      PORT: 4001
+      DB_HOST: mysql-service
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: rootpassword
+      DB_DATABASE: service_db
+    depends_on:
+      mysql-service:
+        condition: service_healthy
+
+  booking-service:
+    image: booking-service
+    build:
+      context: ./flight-booking
+      dockerfile: Dockerfile
+    networks:
+      - micro-net
+    volumes:
+      - booking-service-data:/var/lib/booking-service-data
+    ports:
+      - "4002:4002"
+    depends_on:
+      mysql-service:
+        condition: service_healthy
+    environment:
+      PORT: 4002
+      FLIGHT_SERVER_ADDRESS: http://flights-service:4001
+      DB_HOST: mysql-service
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: rootpassword
+      DB_DATABASE: service_db
+      RABBITMQ_ADDRESS: amqp://rabbitmq:5672
+      BOOKING_EXPIRE_TIME: 300000
+  rabbitmq:
+    image: rabbitmq:latest
+    container_name: rabbitmq
+    networks:
+      - micro-net
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+  notification-service:
+    image: notification-service
+    build:
+      context: ./NOTIFICATION-SERVICE
+      dockerfile: Dockerfile
+    networks:
+      - micro-net
+    volumes:
+      - notification-service-data:/var/lib/notification-service-data
+    ports:
+      - "4003:4003"
+    environment:
+      PORT: 4003
+      RABBITMQ_ADDRESS: amqp://rabbitmq:5672
+      DB_HOST: mysql-service
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: rootpassword
+      DB_DATABASE: service_db
+    env_file:
+      - .env
+    depends_on:
+      mysql-service:
+        condition: service_healthy
+# docker build -t python-app .
+# docker run -it --init --name python_service --network microservice-network -p 3005:3005 -v "$(pwd)":/developer/pythonproject/flask-app  python-app:latest
+# docker run -dit --init --name api_gateway1 --network microservice-network -p 3001:3001 -v "$(pwd)":/developer/nodejs/api-gateway -v api-gateway-node-modules:/developer/nodejs/api-gateway/node_modules api-gateway:latest
+# docker run -it --init --name flights_service --network microservice-network  -p 3000:3000 -v "$(pwd)":/developer/nodejs/flights-service -v flights-service-node-modules:/developer/nodejs/flights-service/node_modules flights-service:latest
+#  docker run -it --init --name booking_service --network microservice-network  -p 4000:4000 -v "$(pwd)":/developer/nodejs/booking-service -v booking-service-node-modules:/developer/nodejs/booking-service/node_modules booking-service:latest
